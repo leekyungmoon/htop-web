@@ -142,8 +142,9 @@ def get(url: str, auth: str | None = None) -> tuple[int, str]:
 
 def start_server(*args: str, env: dict | None = None) -> tuple[subprocess.Popen, str]:
     port = free_port()
+    # Run from "/" so the server is the installed package, not whatever is in the cwd.
     proc = subprocess.Popen([sys.executable, "-m", "htop_web", "--port", str(port), *args],
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd="/",
                             env={**os.environ, **(env or {})})
     return proc, f"http://127.0.0.1:{port}"
 
