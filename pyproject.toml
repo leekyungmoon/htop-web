@@ -38,10 +38,10 @@ htop-web = "htop_web.cli:main"
 Homepage = "https://github.com/leekyungmoon/htop-web"
 
 [tool.setuptools]
-packages = ["htop_web"]
+packages = ["htop_web", "htop_web.static"]
 
 [tool.setuptools.package-data]
-htop_web = ["static/*"]
+"htop_web.static" = ["*"]
 
 [tool.setuptools.dynamic]
 version = { attr = "htop_web.__version__" }
