@@ -56,11 +56,17 @@ The server sorts and filters, and sends each page only the rows it shows.
 | `I` | invert the sort order |
 | `K` | show or hide kernel threads |
 | `B` | highlight program names |
+| `F` | Fit: every host on one screen, no scrolling |
+| `C` | number of host columns: auto, 1 to 6 |
 | `Z` | pause updates |
 | `+` `-` | more or fewer rows |
 | `?` | help |
 
 Click a host's title to fold it. Add `?nodes=gpu01,gpu02` to the address to show some hosts only.
+
+For a wall display, open `/?fit=1`: the hosts share one screen without scrolling, each panel
+shows as many processes as fit, and the text shrinks when it has to. `&cols=4` puts four hosts
+side by side. Fit is meant for big screens; on a phone it may leave room only for the meters.
 
 ### Options
 

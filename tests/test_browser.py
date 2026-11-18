@@ -139,3 +139,64 @@ async def test_hostile_strings_render_as_text(tmp_path):
             await page.close()
     finally:
         await runner.cleanup()
+
+
+FIT_PROBE = """(() => {
+  const keys = document.getElementById('fkeys').getBoundingClientRect().top;
+  const cards = [...document.querySelectorAll('section.host')].map((c) => {
+    const box = c.getBoundingClientRect();
+    const rows = [...c.querySelectorAll('tbody tr')];
+    const last = rows.length ? rows[rows.length - 1].getBoundingClientRect().bottom : box.top;
+    return {top: Math.round(box.top), bottom: box.bottom, rows: rows.length, lastRow: last};
+  });
+  return {
+    fit: document.body.classList.contains('fit'),
+    pageScrolls: document.documentElement.scrollHeight > window.innerHeight + 1,
+    keysTop: keys, cards,
+    tops: [...new Set(cards.map((c) => c.top))].length,
+    font: getComputedStyle(document.querySelector('section.host')).fontSize,
+  };
+})()"""
+
+
+def fits(probe: dict) -> bool:
+    return (probe["fit"] and not probe["pageScrolls"]
+            and all(c["bottom"] <= probe["keysTop"] + 1 for c in probe["cards"])
+            and all(c["rows"] >= 1 and c["lastRow"] <= c["bottom"] + 1 for c in probe["cards"]))
+
+
+async def test_fit_mode_and_columns(tmp_path):
+    server, base = start_server("--demo", "--interval", "0.5")
+    try:
+        async with Browser() as browser:
+            page = await browser.open(base + "/?fit=1", "desktop")
+            await page.wait_for(READY)
+            await asyncio.sleep(1.0)  # let the row count settle with the server
+            probe = await page.eval(FIT_PROBE)
+            assert fits(probe), probe
+            assert probe["tops"] == 2  # four hosts in a 2 x 2 grid on a 1440 x 900 screen
+            assert all(c["rows"] >= 3 for c in probe["cards"]), probe
+            await page.screenshot(tmp_path / "fit-auto.png")
+
+            await page.eval(press("C"))  # 1 column: four hosts stacked, still one screen
+            await asyncio.sleep(1.0)
+            probe = await page.eval(FIT_PROBE)
+            assert fits(probe) and probe["tops"] == 4, probe
+
+            await page.eval("""(() => { const s = document.getElementById('cols');
+                s.value = '4'; s.dispatchEvent(new Event('change')); })()""")
+            await asyncio.sleep(1.0)
+            probe = await page.eval(FIT_PROBE)
+            assert fits(probe) and probe["tops"] == 1, probe  # all four side by side
+            await page.screenshot(tmp_path / "fit-row.png")
+
+            await page.eval(press("F"))  # Fit off: the page scrolls again, 4 columns stay
+            await page.wait_for("!document.body.classList.contains('fit')")
+            await asyncio.sleep(0.5)
+            probe = await page.eval(FIT_PROBE)
+            assert probe["tops"] == 1 and probe["font"] == "13px"
+            assert all(c["rows"] == 15 for c in probe["cards"]), probe
+            assert page.problems() == []
+            await page.close()
+    finally:
+        assert stop(server) == 0

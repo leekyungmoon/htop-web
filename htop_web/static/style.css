@@ -188,8 +188,9 @@ table.procs tbody tr:hover td span { background: var(--cyan); color: #000; }
 
 .host-foot { padding: 4px 0 2px; color: var(--shadow); }
 
-/* Narrow panels (phones): stack the meter columns, drop the less used columns. */
-@container host (max-width: 560px) {
+/* Narrow panels (phones): stack the meter columns, drop the less used columns.
+   In em, so panels shrunk by Fit mode keep two meter columns while the text fits. */
+@container host (max-width: 43em) {
   .meters { flex-direction: column; gap: 0; }
   .mcol { flex: none; }
   table.procs { min-width: 0; }
@@ -198,6 +199,14 @@ table.procs tbody tr:hover td span { background: var(--cyan); color: #000; }
 }
 
 .empty { color: var(--shadow); text-align: center; }
+
+/* Fit mode: every host on one screen. app.js sizes the grid, the rows and the font. */
+body.fit { overflow: hidden; }
+body.fit #hosts { padding: 8px 12px; gap: 8px; overflow: hidden; }
+body.fit .host { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+body.fit .host-body { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+body.fit .table-wrap { overflow: hidden; }
+body.fit table.procs { min-width: 0; }
 
 /* ------------------------------------------------------- htop-like key bar */
 

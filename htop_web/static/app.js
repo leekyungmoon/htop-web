@@ -149,6 +149,9 @@
   const SORT_KEYS = new Set(COLUMNS.map(([key]) => key));
   const ASCENDING_FIRST = new Set(['pid', 'user', 'state', 'command']);
   const ROW_CHOICES = [5, 10, 15, 25, 50, 100, 200];
+  const COL_CHOICES = [0, 1, 2, 3, 4, 5, 6];  // 0 = automatic
+  const MIN_FONT = 8;  // Fit mode shrinks text down to this many pixels ...
+  const MIN_FIT_ROWS = 3;  // ... to keep at least this many process rows per host
 
   const S = {
     params: { nodes: null, sort: 'cpu', order: 'desc', filter: '', rows: 15, kthreads: false },
@@ -162,7 +165,13 @@
     retry: 1000,
     version: '',
     charW: 8,
+    baseCharW: 8,
+    fontPx: 13,
     folded: new Set(),
+    cols: 0,
+    fit: false,
+    fitRows: 0,  // rows asked of the server in Fit mode
+    fitSig: '',
   };
 
   const $ = (id) => document.getElementById(id);
@@ -202,7 +211,11 @@
     p.kthreads = recall('kthreads', p.kthreads);
     S.basename = recall('basename', false);
     S.folded = new Set(recall('folded', []));
+    S.cols = recall('cols', 0);
+    S.fit = recall('fit', false);
     const q = new URLSearchParams(location.search);
+    if (q.get('cols')) S.cols = Number(q.get('cols'));
+    if (q.get('fit')) S.fit = ['1', 'true', 'yes', 'on'].includes(q.get('fit'));
     if (q.get('nodes')) p.nodes = q.get('nodes').split(',').map((s) => s.trim()).filter(Boolean);
     if (q.get('sort')) p.sort = q.get('sort');
     if (q.get('order')) p.order = q.get('order');
@@ -213,6 +226,8 @@
     if (p.order !== 'asc' && p.order !== 'desc') p.order = 'desc';
     p.rows = Math.min(Math.max(Math.round(Number(p.rows)) || 15, 1), 500);
     p.kthreads = Boolean(p.kthreads);
+    S.cols = Math.min(Math.max(Math.round(Number(S.cols)) || 0, 0), 12);
+    S.fit = Boolean(S.fit);
   }
 
   function saveSettings() {
@@ -222,13 +237,16 @@
     store('kthreads', S.params.kthreads);
     store('basename', S.basename);
     store('folded', [...S.folded]);
+    store('cols', S.cols);
+    store('fit', S.fit);
   }
 
   // ----------------------------------------------------------------- network
 
   function send(extra) {
     if (S.ws && S.ws.readyState === WebSocket.OPEN) {
-      S.ws.send(JSON.stringify({ ...S.params, paused: S.paused, ...extra }));
+      const rows = S.fit && S.fitRows ? S.fitRows : S.params.rows;
+      S.ws.send(JSON.stringify({ ...S.params, rows, paused: S.paused, ...extra }));
     }
   }
 
@@ -293,6 +311,7 @@
       card.receivedAt = performance.now();
       drawCard(card);
     }
+    fit(false);
     drawSummary();
   }
 
@@ -312,6 +331,7 @@
     }
     S.order = keys.slice();
     $('empty').hidden = keys.length > 0;
+    applyLayout();
   }
 
   function makeCard(key) {
@@ -385,8 +405,9 @@
     }
     card.body.hidden = false;
     drawMeters(card, view);
-    drawTable(card, view);
-    let note = `${view.procs.length} of ${view.matched} processes`;
+    const rows = S.fit && card.fitRows != null ? view.procs.slice(0, card.fitRows) : view.procs;
+    drawTable(card, rows);
+    let note = `${rows.length} of ${view.matched} processes`;
     if (S.params.filter) note += ` matching "${S.params.filter}" (${view.shown} in all)`;
     if (!S.params.kthreads) note += '; kernel threads hidden';
     card.foot.textContent = note;
@@ -440,7 +461,7 @@
     lines.forEach((segs, i) => setSegs(node.children[i], segs));
   }
 
-  function drawTable(card, view) {
+  function drawTable(card, rows) {
     const sort = S.params.sort;
     const arrow = S.params.order === 'desc' ? '▽' : '△';
     for (const th of card.headRow.children) {
@@ -450,7 +471,6 @@
       th.textContent = sorted ? title + arrow : title;
     }
     const f = S.f;
-    const rows = view.procs;
     const body = card.tbody;
     while (body.children.length < rows.length) body.append(makeRow());
     while (body.children.length > rows.length) body.lastChild.remove();
@@ -503,6 +523,96 @@
     for (const card of S.cards.values()) drawCard(card);
   }
 
+  // ------------------------------------------------------------------ layout
+
+  function baseFont() {
+    return parseFloat(getComputedStyle(document.body).fontSize) || 13;
+  }
+
+  function setFont(px) {
+    S.fontPx = px;
+    $('hosts').style.fontSize = px === baseFont() ? '' : `${px}px`;
+    S.charW = S.baseCharW * px / baseFont();
+  }
+
+  // Automatic columns in Fit mode: the grid whose panels come closest to 1.6:1.
+  function fitColumns(n, width, height) {
+    let best = 1;
+    let bestScore = Infinity;
+    for (let c = 1; c <= n; c++) {
+      const score = Math.abs(Math.log(width / c / (height / Math.ceil(n / c)) / 1.6));
+      if (score < bestScore) {
+        best = c;
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+
+  function applyLayout() {
+    const main = $('hosts');
+    const n = Math.max(S.cards.size, 1);
+    document.body.classList.toggle('fit', S.fit);
+    if (!S.fit) {
+      setFont(baseFont());
+      main.style.height = '';
+      main.style.gridTemplateRows = '';
+      main.style.gridTemplateColumns = S.cols ? `repeat(${Math.min(S.cols, n)}, minmax(0, 1fr))` : '';
+      for (const card of S.cards.values()) card.fitRows = null;
+      return;
+    }
+    // Between the top bar and the key bar, with no page scroll.
+    const height = Math.max(window.innerHeight - $('topbar').offsetHeight
+                            - $('fkeys').offsetHeight, 100);
+    main.style.height = `${height}px`;
+    const cols = S.cols ? Math.min(S.cols, n) : fitColumns(n, main.clientWidth, height);
+    main.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+    main.style.gridTemplateRows = `repeat(${Math.ceil(n / cols)}, minmax(0, 1fr))`;
+    S.fitSig = '';  // panel sizes changed: search the font size again
+  }
+
+  // Process rows that fit in a panel under its title, meters and table header.
+  function roomForRows(card) {
+    const body = getComputedStyle(card.body);
+    const used = card.head.offsetHeight + card.msg.offsetHeight + card.meters.offsetHeight
+      + parseFloat(getComputedStyle(card.meters).marginBottom) + card.thead.offsetHeight
+      + card.foot.offsetHeight + parseFloat(body.paddingTop) + parseFloat(body.paddingBottom);
+    const row = card.thead.offsetHeight || S.fontPx * 1.3;
+    return Math.max(Math.floor((card.root.clientHeight - used) / row), 0);
+  }
+
+  // Fit mode: pick the largest font (down to MIN_FONT) that leaves every panel at least
+  // MIN_FIT_ROWS rows, give each panel the rows it has room for, and ask the server for
+  // as many rows as the roomiest panel shows.
+  function fit(force) {
+    if (!S.fit) return;
+    const cards = [...S.cards.values()].filter((c) => c.view && c.view.cpus && !S.folded.has(c.key));
+    if (!cards.length) return;
+    const sig = cards.map((c) => `${c.key}:${c.view.cpus.length}:${c.view.message ? 1 : 0}`).join('|');
+    const search = force || sig !== S.fitSig;
+    S.fitSig = sig;
+    for (let px = search ? baseFont() : S.fontPx; px >= MIN_FONT; px -= 1) {
+      if (px !== S.fontPx) {
+        setFont(px);
+        for (const card of cards) drawCard(card);
+      }
+      for (const card of cards) card.fitRows = roomForRows(card);
+      if (Math.min(...cards.map((c) => c.fitRows)) >= MIN_FIT_ROWS) break;
+    }
+    for (const card of cards) drawCard(card);
+    const want = Math.min(Math.max(...cards.map((c) => c.fitRows), 1), 200);
+    if (want !== S.fitRows) {
+      S.fitRows = want;
+      send();
+    }
+  }
+
+  function relayout() {
+    applyLayout();
+    redrawAll();
+    fit(true);
+  }
+
   // ------------------------------------------------------------- controls
 
   function sortBy(name) {
@@ -532,6 +642,27 @@
     for (const card of S.cards.values()) drawAge(card);
   }
 
+  function toggleFit() {
+    S.fit = !S.fit;
+    S.fitRows = 0;
+    saveSettings();
+    syncControls();
+    relayout();
+    send();
+  }
+
+  function setCols(cols) {
+    S.cols = cols;
+    saveSettings();
+    syncControls();
+    relayout();
+  }
+
+  function cycleCols() {
+    const i = COL_CHOICES.indexOf(S.cols);
+    setCols(COL_CHOICES[(i + 1) % COL_CHOICES.length]);
+  }
+
   function toggleKthreads() {
     changeParams({ kthreads: !S.params.kthreads });
   }
@@ -558,6 +689,8 @@
     ['K', 'Kthr', 'Show or hide kernel threads', toggleKthreads],
     ['B', 'Base', 'Highlight program names', toggleBasename],
     ['Z', 'Pause', 'Pause or resume updates', togglePause],
+    ['F', 'Fit', 'Fit every host on one screen, no scrolling', toggleFit],
+    ['C', 'Cols', 'Change the number of host columns (auto, 1-6)', cycleCols],
     ['-', 'Rows-', 'Show fewer process rows', () => stepRows(-1)],
     ['+', 'Rows+', 'Show more process rows', () => stepRows(1)],
     ['?', 'Help', 'Show this help', () => showHelp(true)],
@@ -590,6 +723,14 @@
       rows.append(el('option', null, String(S.params.rows)));
     }
     rows.value = String(S.params.rows);
+    rows.disabled = S.fit;
+    const cols = $('cols');
+    if (![...cols.options].some((o) => Number(o.value) === S.cols)) {
+      cols.append(el('option', null, String(S.cols)));
+    }
+    cols.value = String(S.cols);
+    const fitButton = $('fit');
+    fitButton.classList.toggle('on', S.fit);
     $('kthreads').checked = S.params.kthreads;
     const pause = $('pause');
     pause.textContent = S.paused ? 'Resume' : 'Pause';
@@ -597,7 +738,7 @@
     for (const button of $('fkeys').children) {
       const key = button.dataset.key;
       button.classList.toggle('on', (key === 'Z' && S.paused) || (key === 'K' && S.params.kthreads)
-        || (key === 'B' && S.basename));
+        || (key === 'B' && S.basename) || (key === 'F' && S.fit));
     }
   }
 
@@ -627,8 +768,9 @@
   }
 
   function measure() {
-    const probe = $('measure');
-    S.charW = probe.getBoundingClientRect().width / probe.textContent.length || 8;
+    const probe = $('measure');  // outside #hosts, so always at the base font size
+    S.baseCharW = probe.getBoundingClientRect().width / probe.textContent.length || 8;
+    S.charW = S.baseCharW * S.fontPx / baseFont();
   }
 
   let resizeFrame = 0;
@@ -636,12 +778,13 @@
     cancelAnimationFrame(resizeFrame);
     resizeFrame = requestAnimationFrame(() => {
       measure();
-      redrawAll();
+      relayout();
     });
   }
 
   function start() {
     loadSettings();
+    S.fontPx = baseFont();
     measure();
     buildKeys();
     syncControls();
@@ -649,10 +792,14 @@
     $('rows').addEventListener('change', (e) => setRows(Number(e.target.value)));
     $('kthreads').addEventListener('change', (e) => changeParams({ kthreads: e.target.checked }));
     $('pause').addEventListener('click', togglePause);
+    $('fit').addEventListener('click', toggleFit);
+    $('cols').addEventListener('change', (e) => setCols(Number(e.target.value)));
     $('help-close').addEventListener('click', () => showHelp(false));
     $('help').addEventListener('click', (e) => { if (e.target === $('help')) showHelp(false); });
     document.addEventListener('keydown', onKey);
     new ResizeObserver(onResize).observe($('hosts'));
+    window.addEventListener('resize', onResize);
+    applyLayout();
     setInterval(() => { for (const card of S.cards.values()) drawAge(card); }, 1000);
     connect();
   }
