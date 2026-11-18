@@ -11,8 +11,10 @@ import asyncio
 import os
 import time
 
+import aiohttp
 import asyncssh
 import pytest
+from conftest import start_server, stop
 
 from htop_web.app import HUB, Options, create_app
 from htop_web.model import HostState, parse_host
@@ -24,9 +26,11 @@ INTERVAL = 0.3
 class LocalSSHServer:
     """An SSH server that runs the requested command locally."""
 
-    def __init__(self, host_key, authorized_keys):
+    def __init__(self, host_key, authorized_keys, forwarding: bool = False):
         self.host_key = host_key
         self.authorized_keys = authorized_keys
+        self.forwarding = forwarding  # act as a jump host (direct-tcpip), for ProxyJump
+        self.forwarded: list = []
         self.acceptor = None
         self.port = 0
         self.conns: set = set()
@@ -42,6 +46,12 @@ class LocalSSHServer:
 
             def connection_lost(self, exc):
                 server.conns.discard(self.conn)
+
+            def connection_requested(self, dest_host, dest_port, orig_host, orig_port):
+                if not server.forwarding:
+                    return False
+                server.forwarded.append((dest_host, dest_port))
+                return True
 
         self.acceptor = await asyncssh.create_server(
             Server, "127.0.0.1", port, server_host_keys=[self.host_key],
@@ -114,6 +124,7 @@ async def ssh(tmp_path, monkeypatch):
     server.key_path = key_path
     server.known_hosts = known_hosts
     server.host_key_obj = host_key
+    server.authorized = authorized
     yield server
     await server.stop()
 
@@ -193,6 +204,91 @@ async def test_follows_ssh_config_aliases(ssh, aiohttp_client, tmp_path):
     await aiohttp_client(app)
     state = app[HUB].hosts[0]
     await wait_for(lambda: state.status == "ok")
+
+
+async def test_follows_proxyjump(ssh, aiohttp_client, tmp_path):
+    jump = LocalSSHServer(asyncssh.generate_private_key("ssh-ed25519"), ssh.authorized,
+                          forwarding=True)
+    await jump.start()
+    try:
+        with open(ssh.known_hosts, "a") as f:
+            f.write(f"\n[127.0.0.1]:{jump.port} {jump.host_key.export_public_key().decode()}")
+        (tmp_path / ".ssh").mkdir()
+        (tmp_path / ".ssh" / "config").write_text(
+            "Host jumpbox\n"
+            f"    HostName 127.0.0.1\n    Port {jump.port}\n    User tester\n"
+            f"    IdentityFile {ssh.key_path}\n    UserKnownHostsFile {ssh.known_hosts}\n"
+            "Host behind-jump\n"
+            f"    HostName 127.0.0.1\n    Port {ssh.port}\n    User tester\n"
+            f"    IdentityFile {ssh.key_path}\n    UserKnownHostsFile {ssh.known_hosts}\n"
+            "    ProxyJump jumpbox\n")
+        app = create_app([parse_host("behind-jump")],
+                         Options(interval=INTERVAL, min_backoff=0.1, max_backoff=0.5,
+                                 ssh_options={"agent_path": None}))
+        await aiohttp_client(app)
+        state = app[HUB].hosts[0]
+        await wait_for(lambda: state.status == "ok")
+        assert ("127.0.0.1", ssh.port) in jump.forwarded  # it really went through the jump host
+    finally:
+        await jump.stop()
+
+
+async def test_no_verify_host_skips_the_host_key_check(ssh, aiohttp_client):
+    # No known_hosts anywhere (HOME is a fresh directory): checked, it fails ...
+    app = create_app([parse_host(f"tester@127.0.0.1:{ssh.port}")],
+                     Options(interval=INTERVAL, min_backoff=0.1, max_backoff=0.5,
+                             ssh_options={"client_keys": [str(ssh.key_path)],
+                                          "agent_path": None}))
+    await aiohttp_client(app)
+    state = app[HUB].hosts[0]
+    await wait_for(lambda: state.status == "error")
+    assert state.message.startswith("Host key is not trusted")
+    # ... and with verify_host=False (--no-verify-host) it connects.
+    app = create_app([parse_host(f"tester@127.0.0.1:{ssh.port}")],
+                     Options(interval=INTERVAL, min_backoff=0.1, max_backoff=0.5,
+                             verify_host=False,
+                             ssh_options={"client_keys": [str(ssh.key_path)],
+                                          "agent_path": None}))
+    await aiohttp_client(app)
+    state = app[HUB].hosts[0]
+    await wait_for(lambda: state.status == "ok")
+
+
+async def poll_host(base: str, want: str, timeout: float = 30.0) -> dict:
+    """Poll /htop.json without blocking the loop (the SSH server lives in this loop)."""
+    deadline = time.monotonic() + timeout
+    async with aiohttp.ClientSession() as http:
+        while time.monotonic() < deadline:
+            try:
+                async with http.get(base + "/htop.json") as resp:
+                    host = (await resp.json())["hosts"][0]
+                    if host["status"] == want:
+                        return host
+            except (aiohttp.ClientError, OSError):
+                pass
+            await asyncio.sleep(0.2)
+    raise AssertionError(f"host never became {want}")
+
+
+async def test_command_line_over_ssh(ssh, tmp_path):
+    """--ssh-port, --python and --no-verify-host, through a real htop-web process."""
+    (tmp_path / ".ssh").mkdir()
+    (tmp_path / ".ssh" / "config").write_text(
+        f"Host 127.0.0.1\n    User tester\n    IdentityFile {ssh.key_path}\n")
+    args = ["127.0.0.1", "--ssh-port", str(ssh.port), "--python", "python3",
+            "--interval", "0.5"]
+    proc, base = start_server(*args)  # HOME is tmp_path: no known_hosts
+    try:
+        host = await poll_host(base, "error")
+        assert host["message"].startswith("Host key is not trusted")
+    finally:
+        assert await asyncio.to_thread(stop, proc) == 0
+    proc, base = start_server(*args, "--no-verify-host")
+    try:
+        host = await poll_host(base, "ok")
+        assert host["key"] == "127.0.0.1" and host["kind"] == "ssh" and host["procs"]
+    finally:
+        assert await asyncio.to_thread(stop, proc) == 0
 
 
 async def test_missing_python_is_explained(ssh, aiohttp_client):
