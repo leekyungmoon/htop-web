@@ -81,9 +81,10 @@ class LocalSSHServer:
         finally:
             for task in tasks:
                 task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
             if local.returncode is None:
                 local.kill()
-                await local.wait()
+            await local.communicate()  # read to EOF so the transport closes cleanly
             self.children.discard(local)
 
     async def stop(self) -> None:

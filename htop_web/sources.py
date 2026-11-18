@@ -174,7 +174,10 @@ class LocalWorker(Worker):
             tail.cancel()
             if proc.returncode is None:
                 proc.kill()
-                await proc.wait()
+            try:  # drain the pipes so the transport closes now, not at garbage collection
+                await asyncio.wait_for(proc.communicate(), timeout=5)
+            except (asyncio.TimeoutError, OSError, ValueError):
+                pass
 
 
 class SSHWorker(Worker):
