@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>htop-web</title>
+  <link rel="icon" href="static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="static/style.css">
+  <script src="static/app.js" defer></script>
+</head>
+<body>
+  <header id="topbar">
+    <a class="brand" href="https://github.com/leekyungmoon/htop-web" target="_blank"
+       rel="noopener noreferrer">htop-web</a>
+    <span id="conn" class="conn connecting">connecting</span>
+    <span id="summary" class="summary"></span>
+    <span class="spacer"></span>
+    <label class="field">Filter
+      <input id="filter" type="search" placeholder="command or user" autocomplete="off"
+             spellcheck="false" maxlength="200">
+    </label>
+    <label class="field">Rows
+      <select id="rows">
+        <option>5</option><option>10</option><option>15</option><option>25</option>
+        <option>50</option><option>100</option><option>200</option>
+      </select>
+    </label>
+    <label class="field check"><input id="kthreads" type="checkbox"> kernel threads</label>
+    <button id="pause" type="button" title="Pause updates (Z)">Pause</button>
+  </header>
+
+  <main id="hosts" aria-live="off"></main>
+  <p id="empty" class="empty" hidden>No hosts match.</p>
+
+  <footer id="fkeys" aria-label="Keyboard shortcuts"></footer>
+
+  <div id="help" class="help" hidden>
+    <div class="help-box" role="dialog" aria-label="Keyboard shortcuts">
+      <h2>htop-web keys</h2>
+      <table id="help-keys"></table>
+      <p>Click a column header to sort by it; click it again to invert.
+         Click a host's title to fold it. Add <code>?nodes=a,b</code> to the
+         address to show only some hosts.</p>
+      <p class="dim">Read-only: htop-web never changes anything on the hosts.</p>
+      <button id="help-close" type="button">Close</button>
+    </div>
+  </div>
+
+  <span id="measure" aria-hidden="true">0000000000000000000000000000000000000000</span>
+</body>
+</html>
