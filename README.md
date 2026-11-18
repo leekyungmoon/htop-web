@@ -14,7 +14,18 @@ Nothing is installed on the hosts.
 ## Installation
 
 ```bash
-pip install git+https://github.com/leekyungmoon/htop-web.git
+pipx install git+https://github.com/leekyungmoon/htop-web.git
+```
+
+[pipx](https://pipx.pypa.io) gives htop-web a virtual environment of its own and puts the
+`htop-web` command on your PATH. Debian and Ubuntu refuse a plain `pip install` into the system
+Python (`error: externally-managed-environment`, PEP 668); get pipx with `sudo apt install pipx`,
+or use a virtual environment yourself:
+
+```bash
+python3 -m venv ~/.local/share/htop-web
+~/.local/share/htop-web/bin/pip install git+https://github.com/leekyungmoon/htop-web.git
+ln -s ~/.local/share/htop-web/bin/htop-web ~/.local/bin/htop-web
 ```
 
 Python 3.10+ on the machine that runs htop-web. The hosts need Linux and `python3` (3.6 or
