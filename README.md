@@ -1,35 +1,30 @@
 # 📟 htop-web
 
-**A web interface of [htop](https://htop.dev): watch many Linux hosts in one browser page, over SSH.**
+**A web interface of [htop](https://htop.dev): monitor Linux hosts at a glance.**
 
 Inspired by [gpustat-web](https://github.com/wookayin/gpustat-web): run one command, list your
 hosts, and every host's CPU cores, memory, load and busiest processes show up in one live page.
 Nothing is installed on the hosts.
 
 <p align="center">
-  <img src="screenshot.png" width="800" alt="htop-web showing four hosts">
+  <img src="https://raw.githubusercontent.com/leekyungmoon/htop-web/main/screenshot.png" width="800"
+       alt="htop-web showing four hosts">
 </p>
 
 
 ## Installation
 
 ```bash
-pipx install git+https://github.com/leekyungmoon/htop-web.git
+pip install htop-web
 ```
 
-[pipx](https://pipx.pypa.io) gives htop-web a virtual environment of its own and puts the
-`htop-web` command on your PATH. Debian and Ubuntu refuse a plain `pip install` into the system
-Python (`error: externally-managed-environment`, PEP 668); get pipx with `sudo apt install pipx`,
-or use a virtual environment yourself:
+Python 3.10+ is required on the machine that runs htop-web. The hosts need Linux and `python3`
+(3.6 or newer), nothing else.
 
-```bash
-python3 -m venv ~/.local/share/htop-web
-~/.local/share/htop-web/bin/pip install git+https://github.com/leekyungmoon/htop-web.git
-ln -s ~/.local/share/htop-web/bin/htop-web ~/.local/bin/htop-web
-```
-
-Python 3.10+ on the machine that runs htop-web. The hosts need Linux and `python3` (3.6 or
-newer), nothing else.
+On Debian and Ubuntu, pip refuses to install into the system Python
+(`error: externally-managed-environment`, PEP 668). Use [pipx](https://pipx.pypa.io) there
+(`sudo apt install pipx`, then `pipx install htop-web`) or a virtual environment. For the latest
+code on GitHub: `pip install git+https://github.com/leekyungmoon/htop-web.git`.
 
 
 ## Usage
@@ -43,7 +38,8 @@ htop-web --demo                       # made-up hosts, to try it out
 Then open <http://127.0.0.1:48110/>. `python -m htop_web` works the same way.
 
 Each host gets one SSH connection. htop-web sends a small collector script
-([`htop_web/collector.py`](htop_web/collector.py), standard library only) over that connection's
+([`htop_web/collector.py`](https://github.com/leekyungmoon/htop-web/blob/main/htop_web/collector.py),
+standard library only) over that connection's
 stdin and runs it with `python3 -u -`. The script reads `/proc` and prints one JSON line per
 interval; it exits on its own when the connection goes away. When a host fails, its panel says
 why (host key not trusted, authentication failed, `python3` not found, timed out, ...) and
@@ -148,4 +144,4 @@ Chrome, when one is installed, to check the page on desktop and phone widths (se
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/leekyungmoon/htop-web/blob/main/LICENSE)

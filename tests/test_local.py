@@ -55,11 +55,13 @@ def test_agrees_with_free_and_top():
     load1 = float(re.search(r"load average:\s*([\d.]+)", top).group(1))
 
     mem, swap, tasks = snap["mem"], snap["swap"], snap["tasks"]
-    slack = 64 * 2**20  # memory moves a little between the two readings
+    # The two readings are about a second apart; on a busy machine the page cache and
+    # free memory move in that time, so allow 3% of RAM (at least 64 MiB).
+    slack = max(64 * 2**20, total * 3 // 100)
     assert mem["total"] == total and swap["total"] == swap_total
     assert abs(mem["shared"] - shared) < slack
     assert abs(mem["buffers"] + mem["shared"] + mem["cache"] - buff_cache) < slack
-    assert abs(mem["available"] - available) < 4 * slack
+    assert abs(mem["available"] - available) < 2 * slack
     assert abs(swap["used"] + swap["cache"] - swap_used) < slack
     assert abs(tasks["procs"] + tasks["kthreads"] - tasks_total) <= max(20, tasks_total // 10)
     assert abs(snap["load"][0] - load1) < 1.0
